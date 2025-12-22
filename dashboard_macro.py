@@ -20,7 +20,7 @@ st.markdown(hide_menu_style, unsafe_allow_html=True)
 
 # --- 1. CLAVE API ---
 # ⚠️ PEGA TU CLAVE AQUÍ ABAJO
-FRED_API_KEY = '4d80754d7562963786ce89113fd95e9e' 
+FRED_API_KEY = st.secrets["FRED_KEY"] 
 
 # --- 2. FUNCIONES DE DATOS ---
 
