@@ -58,8 +58,8 @@ def obtener_precios_mercado():
     tickers = {
         'NASDAQ': '^IXIC',
         'BITCOIN': 'BTC-USD',
-        'GOLD': 'GC=F',       # Futuros del Oro
-        'DXY': 'DX-Y.NYB'     # Índice Dólar
+        'GOLD': 'GC=F',
+        'DXY': 'DX-Y.NYB'
     }
     precios = {}
     historicos = {}
@@ -98,10 +98,10 @@ def generar_pronostico(trend_m2, estado_fci, ism_manuf):
     # BITCOIN
     p['btc'] = "🚀 Muy Alcista" if ("Subiendo" in trend_m2 and "Relajadas" in estado_fci) else "🔁 Volátil"
     
-    # ORO (Suele subir si hay liquidez o miedo)
+    # ORO
     p['gold'] = "↗️ Alcista (Reserva valor)" if "Subiendo" in trend_m2 else "➡️ Neutral"
     
-    # DÓLAR (Suele bajar si hay liquidez abundante)
+    # DÓLAR
     p['dxy'] = "↘️ Bajista (Debilidad)" if "Relajadas" in estado_fci else "↗️ Alcista (Fortaleza)"
     
     return p
@@ -116,26 +116,30 @@ def main():
     macro = obtener_datos_macro(FRED_API_KEY)
     precios, historia = obtener_precios_mercado()
     
-    # Barra lateral simplificada
+    # Barra lateral (AHORA CON EL ISM SERVICIOS RECUPERADO)
     with st.sidebar:
         st.header("⚙️ Ajustes")
-        ism = st.number_input("ISM Manufacturero", 48.2)
+        ism_manuf = st.number_input("ISM Manufacturero", 48.2)
+        ism_serv = st.number_input("ISM Servicios", 52.6) # <--- ¡Aquí está de vuelta!
         st.markdown("---")
         st.caption("Datos: FRED St. Louis & Yahoo Finance")
 
     # Lógica
     trend_m2, senal_m2, estado_fci = analizar_macro(macro['m2_actual'], macro['m2_previo'], macro['fci_actual'])
-    forecast = generar_pronostico(trend_m2, estado_fci, ism)
+    forecast = generar_pronostico(trend_m2, estado_fci, ism_manuf)
 
     # --- DASHBOARD SUPERIOR (MACRO) ---
-    col1, col2, col3 = st.columns(3)
+    # Ahora usamos 4 columnas para que quepan todos los indicadores
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Liquidez (M2)", f"{trend_m2}", delta=senal_m2, delta_color="off")
+        st.metric("Liquidez M2", f"{trend_m2}", delta=senal_m2, delta_color="off")
     with col2:
-        st.metric("Condiciones (FCI)", f"{macro['fci_actual']:.2f}", delta="< 0 es Bueno", delta_color="inverse")
+        st.metric("Condic. FCI", f"{macro['fci_actual']:.2f}", delta="< 0 es Bueno", delta_color="inverse")
     with col3:
-        st.metric("Economía (ISM)", f"{ism}", delta="Expansión > 50")
+        st.metric("ISM Manuf.", f"{ism_manuf}", delta="Expansión > 50")
+    with col4:
+        st.metric("ISM Serv.", f"{ism_serv}", delta="Sostiene Eco") # <--- Nuevo indicador visual
 
     # Acordeón para gráficos Macro
     with st.expander("📉 Ver Gráficos Macro (M2 y FCI)"):
@@ -149,7 +153,6 @@ def main():
     # --- DASHBOARD INFERIOR (ACTIVOS) ---
     st.subheader("Mercados & Impacto")
     
-    # Usamos Pestañas para organizar 4 activos limpiamente en móvil
     tab1, tab2, tab3, tab4 = st.tabs(["💻 NASDAQ", "₿ BITCOIN", "🥇 ORO", "💵 DÓLAR"])
 
     def mostrar_activo(nombre, ticker_key, forecast_key, color_grafico):
@@ -161,13 +164,13 @@ def main():
             st.line_chart(historia[ticker_key], color=color_grafico)
 
     with tab1:
-        mostrar_activo("NASDAQ", "NASDAQ", "nasdaq", "#0000FF") # Azul
+        mostrar_activo("NASDAQ", "NASDAQ", "nasdaq", "#0000FF") 
     with tab2:
-        mostrar_activo("BITCOIN", "BITCOIN", "btc", "#FF9900")  # Naranja
+        mostrar_activo("BITCOIN", "BITCOIN", "btc", "#FF9900")  
     with tab3:
-        mostrar_activo("ORO", "GOLD", "gold", "#FFD700")        # Dorado
+        mostrar_activo("ORO", "GOLD", "gold", "#FFD700")       
     with tab4:
-        mostrar_activo("DÓLAR DXY", "DXY", "dxy", "#008000")    # Verde
+        mostrar_activo("DÓLAR DXY", "DXY", "dxy", "#008000")    
 
 if __name__ == "__main__":
     main()
