@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Macro Dashboard Pro", layout="centered", page_icon="📈")
 
-# Estilos CSS
+# Estilos CSS (Menú limpio)
 hide_menu_style = """
         <style>
         #MainMenu {visibility: hidden;}
@@ -22,8 +22,8 @@ st.markdown(hide_menu_style, unsafe_allow_html=True)
 try:
     FRED_API_KEY = st.secrets["FRED_KEY"]
 except:
-    # ⚠️ SI ESTÁS EN LOCAL Y FALLA, PEGA TU CLAVE AQUÍ:
-    FRED_API_KEY = 'PON_TU_CLAVE_AQUI_SI_ES_NECESARIO'
+    # ⚠️ PEGA TU CLAVE AQUÍ SI LA NECESITAS EN LOCAL
+    FRED_API_KEY = 'PON_TU_CLAVE_AQUI'
 
 # --- 2. FUNCIONES DE DATOS ---
 
@@ -41,6 +41,7 @@ def obtener_datos_macro(api_key):
         datos['fci_actual'] = fci.iloc[-1]
         datos['api_activa'] = True
     except Exception as e:
+        # Datos simulados
         fechas = pd.date_range(start='2023-01-01', periods=24, freq='M')
         datos['m2_serie'] = pd.Series([20000 + i*50 for i in range(24)], index=fechas)
         datos['fci_serie'] = pd.Series([-0.5 + i*0.01 for i in range(24)], index=fechas)
@@ -91,45 +92,50 @@ def generar_pronostico(trend_m2, estado_fci, ism_manuf):
 def main():
     st.title("🏛️ VISIÓN MACRO GLOBAL")
     
-    # --- BARRA LATERAL (CORREGIDA) ---
-    with st.sidebar:
-        st.header("⚙️ Configuración Manual")
+    # --- NUEVA SECCIÓN DE CONTROLES (EN EL CENTRO, NO EN SIDEBAR) ---
+    # Usamos st.expander para que se pueda abrir y cerrar
+    with st.expander("📝 PULSA AQUÍ PARA CAMBIAR FECHA Y DATOS ISM", expanded=False):
         
-        # Selector de FECHA
-        st.markdown("**📅 Fecha de los datos ISM**")
-        col_mes, col_ano = st.columns(2)
-        with col_mes:
-            mes_seleccionado = st.selectbox("Mes", 
+        st.caption("Selecciona a qué mes corresponden los datos que vas a introducir:")
+        
+        # 1. FECHA (Columnas ajustadas)
+        c_mes, c_ano = st.columns(2)
+        with c_mes:
+            mes_seleccionado = st.selectbox("Mes del Dato", 
                 ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
-                 "Julio", "Agosto", "Sept", "Oct", "Nov", "Dic"], index=0)
-        with col_ano:
-            ano_seleccionado = st.selectbox("Año", ["2024", "2025", "2026"], index=1)
+                 "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"], index=0)
+        with c_ano:
+            ano_seleccionado = st.selectbox("Año del Dato", ["2024", "2025", "2026"], index=1)
+            
+        fecha_texto = f"{mes_seleccionado} {ano_seleccionado}"
         
-        fecha_referencia = f"{mes_seleccionado} {ano_seleccionado}"
         st.markdown("---")
+        st.markdown(f"**Introduce los valores ISM de {fecha_texto}:**")
         
-        st.markdown(f"**Indicar datos de: {fecha_referencia}**")
+        # 2. INPUTS NUMÉRICOS (Corregidos para el botón menos)
+        c_input1, c_input2 = st.columns(2)
         
-        # CORRECCIÓN AQUÍ: Añadido min_value y max_value
-        ism_manuf = st.number_input(
-            "🏭 ISM Manufacturero", 
-            value=48.2, 
-            min_value=0.0,    # Límite inferior
-            max_value=100.0,  # Límite superior
-            step=0.1, 
-            format="%.1f"
-        )
+        with c_input1:
+            ism_manuf = st.number_input(
+                "🏭 Manufacturero", 
+                value=48.2,      # Valor inicial float
+                min_value=0.0,   # Mínimo float
+                max_value=100.0, # Máximo float
+                step=0.1,        # Paso float
+                format="%.1f"    # Formato visual
+            )
+            
+        with c_input2:
+            ism_serv = st.number_input(
+                "🛎️ Servicios", 
+                value=52.6, 
+                min_value=0.0, 
+                max_value=100.0, 
+                step=0.1, 
+                format="%.1f"
+            )
         
-        ism_serv = st.number_input(
-            "🛎️ ISM Servicios", 
-            value=52.6, 
-            min_value=0.0,    # Límite inferior
-            max_value=100.0,  # Límite superior
-            step=0.1, 
-            format="%.1f"
-        )
-        
-        st.info("Nota: Los datos macro se actualizan al cambiar estos valores.")
+        st.info(f"✅ Los datos se aplicarán automáticamente al cerrar esta pestaña.")
 
     # Carga y Lógica
     macro = obtener_datos_macro(FRED_API_KEY)
@@ -138,7 +144,9 @@ def main():
     forecast = generar_pronostico(trend_m2, estado_fci, ism_manuf)
 
     # --- DASHBOARD ---
-    st.caption(f"Tracking en tiempo real | Datos manuales: **{fecha_referencia}**")
+    
+    # Mostramos la fecha seleccionada en grande
+    st.markdown(f"### 📅 Datos manuales: {fecha_texto}")
     
     col1, col2, col3, col4 = st.columns(4)
     with col1: st.metric("Liquidez M2", f"{trend_m2}", delta=senal_m2, delta_color="off")
