@@ -6,7 +6,7 @@ import altair as alt
 from datetime import datetime, timedelta
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Macro Dashboard Pro V6", layout="centered", page_icon="🏛️")
+st.set_page_config(page_title="Macro Dashboard Pro V7", layout="centered", page_icon="🏛️")
 
 hide_menu_style = """
         <style>
@@ -22,7 +22,6 @@ st.markdown(hide_menu_style, unsafe_allow_html=True)
 try:
     FRED_API_KEY = st.secrets["FRED_KEY"]
 except:
-    # ⚠️ SI ESTÁS EN LOCAL, PEGA TU CLAVE AQUÍ
     FRED_API_KEY = 'PON_TU_CLAVE_AQUI'
 
 # --- 2. FUNCIONES DE DATOS ---
@@ -35,14 +34,13 @@ def obtener_datos_macro(api_key):
         m2 = fred.get_series('M2SL', observation_start=start_date)
         fci = fred.get_series('NFCI', observation_start=start_date)
         
-        # Aseguramos que el índice es datetime
-        m2.index = pd.to_datetime(m2.index)
-        fci.index = pd.to_datetime(fci.index)
+        # FIX 1: Limpieza de zona horaria para evitar conflictos
+        m2.index = pd.to_datetime(m2.index).tz_localize(None)
+        fci.index = pd.to_datetime(fci.index).tz_localize(None)
         
         datos['m2_serie'] = m2
         datos['fci_serie'] = fci
         
-        # Usamos iloc[-1] con seguridad
         if not m2.empty:
             datos['m2_actual'] = m2.iloc[-1] 
             datos['m2_previo'] = m2.iloc[-2]
@@ -57,7 +55,6 @@ def obtener_datos_macro(api_key):
             
         datos['api_activa'] = True
     except Exception as e:
-        # Datos simulados de emergencia
         fechas = pd.date_range(start='2023-01-01', periods=24, freq='M')
         datos['m2_serie'] = pd.Series([20800 + i*10 for i in range(24)], index=fechas)
         datos['fci_serie'] = pd.Series([-0.5] * 24, index=fechas)
@@ -75,6 +72,10 @@ def obtener_precios_mercado():
         try:
             ticker = yf.Ticker(simbolo)
             hist = ticker.history(period="2y")
+            
+            # FIX 1: Limpieza de zona horaria también aquí
+            hist.index = pd.to_datetime(hist.index).tz_localize(None)
+            
             if not hist.empty:
                 precios[nombre] = hist['Close'].iloc[-1]
                 historicos[nombre] = hist['Close']
@@ -86,34 +87,28 @@ def obtener_precios_mercado():
             historicos[nombre] = pd.Series([])
     return precios, historicos
 
-# --- FUNCIÓN GRÁFICA CORREGIDA (SOLUCIÓN KEYERROR) ---
+# --- FUNCIÓN GRÁFICA MEJORADA ---
 def preparar_datos_correlacion(serie_activo, serie_m2, nombre_activo):
-    """
-    Combina datos usando merge para evitar errores si faltan fechas en M2.
-    """
     if serie_activo.empty or serie_m2.empty:
         return pd.DataFrame()
 
-    # 1. Preparar Activo (Fin de mes)
+    # Resamplear activo a fin de mes y quitar hora
     activo_mensual = serie_activo.resample('M').last()
-    # Forzamos fecha al inicio del mes para coincidir con M2
     activo_mensual.index = pd.to_datetime(activo_mensual.index).to_period('M').to_timestamp()
+    
     df_activo = pd.DataFrame({'Fecha': activo_mensual.index, nombre_activo: activo_mensual.values})
 
-    # 2. Preparar M2
+    # Preparar M2
     serie_m2_clean = serie_m2.copy()
     serie_m2_clean.index = pd.to_datetime(serie_m2_clean.index).to_period('M').to_timestamp()
     df_m2 = pd.DataFrame({'Fecha': serie_m2_clean.index, 'Liquidez M2 (Billions)': serie_m2_clean.values})
 
-    # 3. FUSIÓN SEGURA (MERGE)
-    # 'inner' solo mantiene las filas donde existen datos en AMBOS lados.
-    # Si M2 no tiene el dato de este mes, se descarta y no da error.
+    # Merge seguro
     df_merged = pd.merge(df_activo, df_m2, on='Fecha', how='inner')
     
     if df_merged.empty:
         return pd.DataFrame()
 
-    # 4. Formato para Altair
     df_melted = df_merged.melt('Fecha', var_name='Indicador', value_name='Valor')
     return df_melted
 
@@ -128,7 +123,6 @@ def analizar_macro(m2_now, m2_prev, fci):
 def generar_pronostico(trend_m2, estado_fci, ism_manuf):
     p = {}
     trending_up = (trend_m2 == "Subiendo")
-    
     p['nasdaq'] = "↗️ Alcista" if trending_up else "➡️ Lateral"
     if ism_manuf < 50: p['nasdaq'] += " (⚠️ Riesgo ISM)"
     p['btc'] = "🚀 Muy Alcista" if (trending_up and "Relajadas" in estado_fci) else "🔁 Volátil"
@@ -139,9 +133,8 @@ def generar_pronostico(trend_m2, estado_fci, ism_manuf):
 # --- 4. INTERFAZ VISUAL ---
 
 def main():
-    st.title("🏛️ VISIÓN MACRO GLOBAL V6")
+    st.title("🏛️ VISIÓN MACRO GLOBAL V7")
     
-    # --- MENÚ MANUAL ---
     with st.expander("📝 PULSA PARA CAMBIAR FECHA Y DATOS ISM (Simulación)", expanded=False):
         c_mes, c_ano = st.columns(2)
         with c_mes:
@@ -152,14 +145,10 @@ def main():
             ano_seleccionado = st.selectbox("Año", ["2024", "2025", "2026"], index=1)
         fecha_texto = f"{mes_seleccionado} {ano_seleccionado}"
         st.markdown("---")
-        
         c_i1, c_i2 = st.columns(2)
-        with c_i1: 
-            ism_manuf = st.number_input("🏭 Manufacturero", value=48.2, min_value=0.0, max_value=100.0, step=0.1, format="%.1f")
-        with c_i2: 
-            ism_serv = st.number_input("🛎️ Servicios", value=52.6, min_value=0.0, max_value=100.0, step=0.1, format="%.1f")
+        with c_i1: ism_manuf = st.number_input("🏭 Manufacturero", value=48.2, min_value=0.0, max_value=100.0, step=0.1, format="%.1f")
+        with c_i2: ism_serv = st.number_input("🛎️ Servicios", value=52.6, min_value=0.0, max_value=100.0, step=0.1, format="%.1f")
 
-    # Carga
     with st.spinner("Conectando con la FED y Mercados..."):
         macro = obtener_datos_macro(FRED_API_KEY)
         precios, historia = obtener_precios_mercado()
@@ -167,7 +156,6 @@ def main():
     trend_m2, senal_m2, estado_fci = analizar_macro(macro['m2_actual'], macro['m2_previo'], macro['fci_actual'])
     forecast = generar_pronostico(trend_m2, estado_fci, ism_manuf)
 
-    # --- DASHBOARD ---
     st.markdown(f"### 📅 Escenario Manual: {fecha_texto}")
     col1, col2, col3, col4 = st.columns(4)
     with col1: st.metric("Liquidez M2 (FED)", f"{trend_m2}", delta=senal_m2, delta_color="off")
@@ -188,7 +176,6 @@ def main():
             st.info(f"Visión Monetarista: {forecast[forecast_key]}")
         
         with c2:
-            # LLAMADA A LA FUNCIÓN CORREGIDA
             df_chart = preparar_datos_correlacion(historia[ticker_key], macro['m2_serie'], nombre_activo)
             
             if df_chart.empty:
@@ -197,17 +184,22 @@ def main():
 
             base = alt.Chart(df_chart).encode(x=alt.X('Fecha:T', axis=alt.Axis(title=None, format='%Y-%m')))
 
+            # FIX 2: scale(zero=False) para que la curva verde se note más
             linea_activo = base.transform_filter(alt.datum.Indicador == nombre_activo).mark_line(
                 color='#1f77b4', strokeWidth=3
             ).encode(
-                y=alt.Y('Valor:Q', axis=alt.Axis(title=nombre_activo, titleColor='#1f77b4')),
+                y=alt.Y('Valor:Q', 
+                        scale=alt.Scale(zero=False),  # <--- ESTO HACE EL ZOOM
+                        axis=alt.Axis(title=nombre_activo, titleColor='#1f77b4')),
                 tooltip=['Fecha', alt.Tooltip('Valor', title='Precio', format=',.0f')]
             )
 
             linea_m2 = base.transform_filter(alt.datum.Indicador == 'Liquidez M2 (Billions)').mark_line(
                 color='#2ca02c', strokeWidth=3, strokeDash=[5,5]
             ).encode(
-                y=alt.Y('Valor:Q', axis=alt.Axis(title='M2 Billions (FED)', titleColor='#2ca02c', orient='right')),
+                y=alt.Y('Valor:Q', 
+                        scale=alt.Scale(zero=False), # <--- ESTO HACE EL ZOOM EN LA M2
+                        axis=alt.Axis(title='M2 Billions (FED)', titleColor='#2ca02c', orient='right')),
                 tooltip=['Fecha', alt.Tooltip('Valor', title='M2 FED', format=',.0f')]
             )
             
