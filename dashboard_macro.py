@@ -6,7 +6,7 @@ import altair as alt
 from datetime import datetime, timedelta
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Macro Dashboard Pro V8", layout="centered", page_icon="🏛️")
+st.set_page_config(page_title="Macro Dashboard Pro V9", layout="centered", page_icon="🏛️")
 
 hide_menu_style = """
         <style>
@@ -34,7 +34,7 @@ def obtener_datos_macro(api_key):
         m2 = fred.get_series('M2SL', observation_start=start_date)
         fci = fred.get_series('NFCI', observation_start=start_date)
         
-        # Limpieza básica
+        # Limpieza
         m2.index = pd.to_datetime(m2.index).tz_localize(None)
         fci.index = pd.to_datetime(fci.index).tz_localize(None)
         
@@ -55,6 +55,7 @@ def obtener_datos_macro(api_key):
             
         datos['api_activa'] = True
     except Exception as e:
+        # Datos simulados si falla FRED
         fechas = pd.date_range(start='2023-01-01', periods=24, freq='M')
         datos['m2_serie'] = pd.Series([20800 + i*10 for i in range(24)], index=fechas)
         datos['fci_serie'] = pd.Series([-0.5] * 24, index=fechas)
@@ -65,63 +66,58 @@ def obtener_datos_macro(api_key):
     return datos
 
 def obtener_precios_mercado():
-    tickers = {'NASDAQ': '^IXIC', 'BITCOIN': 'BTC-USD', 'GOLD': 'GC=F', 'DXY': 'DX-Y.NYB'}
+    # CAMBIO V9: Usamos 'QQQ' (ETF) en lugar de '^IXIC' porque Yahoo bloquea el índice.
+    # El gráfico es idéntico, pero el precio será ~$500 en vez de ~$19k.
+    tickers = {
+        'NASDAQ (ETF QQQ)': 'QQQ', 
+        'BITCOIN': 'BTC-USD', 
+        'ORO': 'GC=F', 
+        'DÓLAR DXY': 'DX-Y.NYB'
+    }
+    
     precios = {}
     historicos = {}
+    
     for nombre, simbolo in tickers.items():
         try:
             ticker = yf.Ticker(simbolo)
             hist = ticker.history(period="2y")
-            # Limpieza de zona horaria crítica para Nasdaq
-            hist.index = pd.to_datetime(hist.index).tz_localize(None)
             
+            # Limpieza zona horaria
             if not hist.empty:
+                hist.index = pd.to_datetime(hist.index).tz_localize(None)
                 precios[nombre] = hist['Close'].iloc[-1]
                 historicos[nombre] = hist['Close']
             else:
                 precios[nombre] = 0
-                historicos[nombre] = pd.Series([])
+                historicos[nombre] = pd.Series(dtype='float64')
         except:
             precios[nombre] = 0
-            historicos[nombre] = pd.Series([])
+            historicos[nombre] = pd.Series(dtype='float64')
+            
     return precios, historicos
 
-# --- FUNCIÓN GRÁFICA "BLINDADA" (SOLUCIÓN NASDAQ) ---
+# --- FUNCIÓN GRÁFICA (Igual que V8 - Funciona bien) ---
 def preparar_datos_correlacion(serie_activo, serie_m2, nombre_activo):
-    """
-    Usa una unión basada en PERIODOS (Mes-Año) para ignorar zonas horarias.
-    """
     if serie_activo.empty or serie_m2.empty:
         return pd.DataFrame()
 
-    # 1. Preparar Activo
-    # Convertimos a Mensual y creamos una columna 'Periodo' (ej: 2024-01)
+    # 1. Activo Mensual + Key
     activo_mensual = serie_activo.resample('M').last()
-    df_activo = pd.DataFrame({
-        'Fecha': activo_mensual.index, 
-        nombre_activo: activo_mensual.values
-    })
-    # Creamos la llave maestra
+    df_activo = pd.DataFrame({'Fecha': activo_mensual.index, nombre_activo: activo_mensual.values})
     df_activo['Periodo_Key'] = df_activo['Fecha'].dt.to_period('M')
 
-    # 2. Preparar M2
-    df_m2 = pd.DataFrame({
-        'Fecha_M2': serie_m2.index, 
-        'Liquidez M2 (Billions)': serie_m2.values
-    })
-    # Creamos la llave maestra
+    # 2. M2 + Key
+    df_m2 = pd.DataFrame({'Fecha_M2': serie_m2.index, 'Liquidez M2 (Billions)': serie_m2.values})
     df_m2['Periodo_Key'] = df_m2['Fecha_M2'].dt.to_period('M')
 
-    # 3. MERGE ROBUSTO (Usando la llave maestra)
+    # 3. Merge por Periodo
     df_merged = pd.merge(df_activo, df_m2, on='Periodo_Key', how='inner')
     
     if df_merged.empty:
         return pd.DataFrame()
 
-    # Limpiamos columnas auxiliares y usamos la fecha del activo para el gráfico
     df_final = df_merged[['Fecha', nombre_activo, 'Liquidez M2 (Billions)']]
-
-    # 4. Formato para Altair
     df_melted = df_final.melt('Fecha', var_name='Indicador', value_name='Valor')
     return df_melted
 
@@ -136,6 +132,7 @@ def analizar_macro(m2_now, m2_prev, fci):
 def generar_pronostico(trend_m2, estado_fci, ism_manuf):
     p = {}
     trending_up = (trend_m2 == "Subiendo")
+    # Nota: Usamos la misma lógica para el QQQ
     p['nasdaq'] = "↗️ Alcista" if trending_up else "➡️ Lateral"
     if ism_manuf < 50: p['nasdaq'] += " (⚠️ Riesgo ISM)"
     p['btc'] = "🚀 Muy Alcista" if (trending_up and "Relajadas" in estado_fci) else "🔁 Volátil"
@@ -146,7 +143,7 @@ def generar_pronostico(trend_m2, estado_fci, ism_manuf):
 # --- 4. INTERFAZ VISUAL ---
 
 def main():
-    st.title("🏛️ VISIÓN MACRO GLOBAL V8")
+    st.title("🏛️ VISIÓN MACRO GLOBAL V9")
     
     with st.expander("📝 PULSA PARA CAMBIAR FECHA Y DATOS ISM (Simulación)", expanded=False):
         c_mes, c_ano = st.columns(2)
@@ -180,7 +177,8 @@ def main():
     st.subheader("🌊 La Ola Monetaria: Correlaciones M2")
     st.caption("Evolución de los activos (Azul) vs Liquidez Global M2 (Verde).")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["💻 NASDAQ vs M2", "₿ BITCOIN vs M2", "🥇 ORO vs M2", "💵 DÓLAR vs M2"])
+    # Nombres de pestañas actualizados
+    tab1, tab2, tab3, tab4 = st.tabs(["💻 NASDAQ (QQQ)", "₿ BITCOIN", "🥇 ORO", "💵 DÓLAR"])
 
     def mostrar_correlacion(nombre_activo, ticker_key, forecast_key):
         c1, c2 = st.columns([1, 3])
@@ -192,19 +190,20 @@ def main():
             df_chart = preparar_datos_correlacion(historia[ticker_key], macro['m2_serie'], nombre_activo)
             
             if df_chart.empty:
-                st.warning(f"Esperando actualización de datos M2 para correlacionar con {nombre_activo}.")
+                # Si esto sale, es que Yahoo falló incluso con el ETF, pero es muy raro
+                st.warning(f"Esperando actualización de datos para {nombre_activo}.")
                 return
 
             base = alt.Chart(df_chart).encode(x=alt.X('Fecha:T', axis=alt.Axis(title=None, format='%Y-%m')))
 
-            # MANTENEMOS EL ZOOM AUTOMÁTICO (zero=False) QUE TE GUSTÓ
+            # Zoom activado (zero=False)
             linea_activo = base.transform_filter(alt.datum.Indicador == nombre_activo).mark_line(
                 color='#1f77b4', strokeWidth=3
             ).encode(
                 y=alt.Y('Valor:Q', 
                         scale=alt.Scale(zero=False), 
                         axis=alt.Axis(title=nombre_activo, titleColor='#1f77b4')),
-                tooltip=['Fecha', alt.Tooltip('Valor', title='Precio', format=',.0f')]
+                tooltip=['Fecha', alt.Tooltip('Valor', title='Precio', format=',.2f')]
             )
 
             linea_m2 = base.transform_filter(alt.datum.Indicador == 'Liquidez M2 (Billions)').mark_line(
@@ -219,10 +218,10 @@ def main():
             chart_final = alt.layer(linea_activo, linea_m2).resolve_scale(y='independent').properties(height=350).interactive()
             st.altair_chart(chart_final, use_container_width=True)
 
-    with tab1: mostrar_correlacion("NASDAQ", "NASDAQ", "nasdaq") 
+    with tab1: mostrar_correlacion("NASDAQ (ETF QQQ)", "NASDAQ (ETF QQQ)", "nasdaq") 
     with tab2: mostrar_correlacion("BITCOIN", "BITCOIN", "btc")  
-    with tab3: mostrar_correlacion("ORO", "GOLD", "gold")       
-    with tab4: mostrar_correlacion("DÓLAR DXY", "DXY", "dxy")    
+    with tab3: mostrar_correlacion("ORO", "ORO", "gold")       
+    with tab4: mostrar_correlacion("DÓLAR DXY", "DÓLAR DXY", "dxy")    
 
 if __name__ == "__main__":
     main()
