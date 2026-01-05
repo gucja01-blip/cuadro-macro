@@ -6,7 +6,7 @@ import altair as alt
 from datetime import datetime, timedelta
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Macro Dashboard Pro V7", layout="centered", page_icon="🏛️")
+st.set_page_config(page_title="Macro Dashboard Pro V8", layout="centered", page_icon="🏛️")
 
 hide_menu_style = """
         <style>
@@ -34,7 +34,7 @@ def obtener_datos_macro(api_key):
         m2 = fred.get_series('M2SL', observation_start=start_date)
         fci = fred.get_series('NFCI', observation_start=start_date)
         
-        # FIX 1: Limpieza de zona horaria para evitar conflictos
+        # Limpieza básica
         m2.index = pd.to_datetime(m2.index).tz_localize(None)
         fci.index = pd.to_datetime(fci.index).tz_localize(None)
         
@@ -72,8 +72,7 @@ def obtener_precios_mercado():
         try:
             ticker = yf.Ticker(simbolo)
             hist = ticker.history(period="2y")
-            
-            # FIX 1: Limpieza de zona horaria también aquí
+            # Limpieza de zona horaria crítica para Nasdaq
             hist.index = pd.to_datetime(hist.index).tz_localize(None)
             
             if not hist.empty:
@@ -87,29 +86,43 @@ def obtener_precios_mercado():
             historicos[nombre] = pd.Series([])
     return precios, historicos
 
-# --- FUNCIÓN GRÁFICA MEJORADA ---
+# --- FUNCIÓN GRÁFICA "BLINDADA" (SOLUCIÓN NASDAQ) ---
 def preparar_datos_correlacion(serie_activo, serie_m2, nombre_activo):
+    """
+    Usa una unión basada en PERIODOS (Mes-Año) para ignorar zonas horarias.
+    """
     if serie_activo.empty or serie_m2.empty:
         return pd.DataFrame()
 
-    # Resamplear activo a fin de mes y quitar hora
+    # 1. Preparar Activo
+    # Convertimos a Mensual y creamos una columna 'Periodo' (ej: 2024-01)
     activo_mensual = serie_activo.resample('M').last()
-    activo_mensual.index = pd.to_datetime(activo_mensual.index).to_period('M').to_timestamp()
-    
-    df_activo = pd.DataFrame({'Fecha': activo_mensual.index, nombre_activo: activo_mensual.values})
+    df_activo = pd.DataFrame({
+        'Fecha': activo_mensual.index, 
+        nombre_activo: activo_mensual.values
+    })
+    # Creamos la llave maestra
+    df_activo['Periodo_Key'] = df_activo['Fecha'].dt.to_period('M')
 
-    # Preparar M2
-    serie_m2_clean = serie_m2.copy()
-    serie_m2_clean.index = pd.to_datetime(serie_m2_clean.index).to_period('M').to_timestamp()
-    df_m2 = pd.DataFrame({'Fecha': serie_m2_clean.index, 'Liquidez M2 (Billions)': serie_m2_clean.values})
+    # 2. Preparar M2
+    df_m2 = pd.DataFrame({
+        'Fecha_M2': serie_m2.index, 
+        'Liquidez M2 (Billions)': serie_m2.values
+    })
+    # Creamos la llave maestra
+    df_m2['Periodo_Key'] = df_m2['Fecha_M2'].dt.to_period('M')
 
-    # Merge seguro
-    df_merged = pd.merge(df_activo, df_m2, on='Fecha', how='inner')
+    # 3. MERGE ROBUSTO (Usando la llave maestra)
+    df_merged = pd.merge(df_activo, df_m2, on='Periodo_Key', how='inner')
     
     if df_merged.empty:
         return pd.DataFrame()
 
-    df_melted = df_merged.melt('Fecha', var_name='Indicador', value_name='Valor')
+    # Limpiamos columnas auxiliares y usamos la fecha del activo para el gráfico
+    df_final = df_merged[['Fecha', nombre_activo, 'Liquidez M2 (Billions)']]
+
+    # 4. Formato para Altair
+    df_melted = df_final.melt('Fecha', var_name='Indicador', value_name='Valor')
     return df_melted
 
 # --- 3. LÓGICA DE NEGOCIO ---
@@ -133,7 +146,7 @@ def generar_pronostico(trend_m2, estado_fci, ism_manuf):
 # --- 4. INTERFAZ VISUAL ---
 
 def main():
-    st.title("🏛️ VISIÓN MACRO GLOBAL V7")
+    st.title("🏛️ VISIÓN MACRO GLOBAL V8")
     
     with st.expander("📝 PULSA PARA CAMBIAR FECHA Y DATOS ISM (Simulación)", expanded=False):
         c_mes, c_ano = st.columns(2)
@@ -184,12 +197,12 @@ def main():
 
             base = alt.Chart(df_chart).encode(x=alt.X('Fecha:T', axis=alt.Axis(title=None, format='%Y-%m')))
 
-            # FIX 2: scale(zero=False) para que la curva verde se note más
+            # MANTENEMOS EL ZOOM AUTOMÁTICO (zero=False) QUE TE GUSTÓ
             linea_activo = base.transform_filter(alt.datum.Indicador == nombre_activo).mark_line(
                 color='#1f77b4', strokeWidth=3
             ).encode(
                 y=alt.Y('Valor:Q', 
-                        scale=alt.Scale(zero=False),  # <--- ESTO HACE EL ZOOM
+                        scale=alt.Scale(zero=False), 
                         axis=alt.Axis(title=nombre_activo, titleColor='#1f77b4')),
                 tooltip=['Fecha', alt.Tooltip('Valor', title='Precio', format=',.0f')]
             )
@@ -198,7 +211,7 @@ def main():
                 color='#2ca02c', strokeWidth=3, strokeDash=[5,5]
             ).encode(
                 y=alt.Y('Valor:Q', 
-                        scale=alt.Scale(zero=False), # <--- ESTO HACE EL ZOOM EN LA M2
+                        scale=alt.Scale(zero=False),
                         axis=alt.Axis(title='M2 Billions (FED)', titleColor='#2ca02c', orient='right')),
                 tooltip=['Fecha', alt.Tooltip('Valor', title='M2 FED', format=',.0f')]
             )
