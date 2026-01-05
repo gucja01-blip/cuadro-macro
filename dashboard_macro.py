@@ -22,7 +22,7 @@ st.markdown(hide_menu_style, unsafe_allow_html=True)
 try:
     FRED_API_KEY = st.secrets["FRED_KEY"]
 except:
-    # ⚠️ PEGA TU CLAVE AQUÍ SI ES NECESARIO EN LOCAL
+    # ⚠️ PEGA TU CLAVE AQUÍ SI LA NECESITAS EN LOCAL
     FRED_API_KEY = 'PON_TU_CLAVE_AQUI'
 
 # --- 2. FUNCIONES DE DATOS ---
@@ -120,7 +120,7 @@ def generar_pronostico(trend_m2, estado_fci, ism_manuf):
 def main():
     st.title("🏛️ VISIÓN MACRO GLOBAL V6")
     
-    # --- MENÚ DE INPUTS MANUALES (CORREGIDO) ---
+    # --- MENÚ DE INPUTS MANUALES ---
     with st.expander("📝 PULSA PARA CAMBIAR FECHA Y DATOS ISM (Simulación)", expanded=False):
         st.caption("Configura tu escenario económico manual:")
         c_mes, c_ano = st.columns(2)
@@ -135,7 +135,6 @@ def main():
         
         c_i1, c_i2 = st.columns(2)
         
-        # AQUÍ ESTABA EL ERROR: Ahora usamos nombres explícitos (value=, min_value=, etc.)
         with c_i1: 
             ism_manuf = st.number_input(
                 "🏭 Manufacturero", 
@@ -157,4 +156,64 @@ def main():
 
     # Carga y Lógica
     with st.spinner("Conectando con la FED y Mercados..."):
-        macro = obtener_datos_macro(FRED_API
+        # AQUÍ ESTABA EL CORTE ANTES. Ahora está completo:
+        macro = obtener_datos_macro(FRED_API_KEY)
+        precios, historia = obtener_precios_mercado()
+        
+    trend_m2, senal_m2, estado_fci = analizar_macro(macro['m2_actual'], macro['m2_previo'], macro['fci_actual'])
+    forecast = generar_pronostico(trend_m2, estado_fci, ism_manuf)
+
+    # --- DASHBOARD SUPERIOR ---
+    st.markdown(f"### 📅 Escenario Manual: {fecha_texto}")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: st.metric("Liquidez M2 (FED)", f"{trend_m2}", delta=senal_m2, delta_color="off", help="Dato real de la FED.")
+    with col2: st.metric("Condic. FCI (FED)", f"{macro['fci_actual']:.2f}", delta="< 0 es Bueno", delta_color="inverse")
+    with col3: st.metric("ISM Manuf. (Tú)", f"{ism_manuf}", delta="Expansión > 50")
+    with col4: st.metric("ISM Serv. (Tú)", f"{ism_serv}", delta="Sostiene Eco")
+
+    st.markdown("---")
+    st.subheader("🌊 La Ola Monetaria: Correlaciones M2")
+    st.caption("Evolución de los activos (Azul) vs Liquidez Global M2 (Verde).")
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["💻 NASDAQ vs M2", "₿ BITCOIN vs M2", "🥇 ORO vs M2", "💵 DÓLAR vs M2"])
+
+    def mostrar_correlacion(nombre_activo, ticker_key, forecast_key):
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            st.metric(f"Precio {nombre_activo}", f"${precios[ticker_key]:,.2f}")
+            st.info(f"Visión Monetarista: {forecast[forecast_key]}")
+        
+        with c2:
+            df_chart = preparar_datos_correlacion(historia[ticker_key], macro['m2_serie'], nombre_activo)
+            
+            if df_chart.empty:
+                st.warning("No hay suficientes datos coincidentes.")
+                return
+
+            # Gráfico Altair
+            base = alt.Chart(df_chart).encode(x=alt.X('Fecha:T', axis=alt.Axis(title=None, format='%Y-%m')))
+
+            linea_activo = base.transform_filter(alt.datum.Indicador == nombre_activo).mark_line(
+                color='#1f77b4', strokeWidth=3
+            ).encode(
+                y=alt.Y('Valor:Q', axis=alt.Axis(title=nombre_activo, titleColor='#1f77b4')),
+                tooltip=['Fecha', alt.Tooltip('Valor', title='Precio', format=',.0f')]
+            )
+
+            linea_m2 = base.transform_filter(alt.datum.Indicador == 'Liquidez M2 (Billions)').mark_line(
+                color='#2ca02c', strokeWidth=3, strokeDash=[5,5]
+            ).encode(
+                y=alt.Y('Valor:Q', axis=alt.Axis(title='M2 Billions (FED)', titleColor='#2ca02c', orient='right')),
+                tooltip=['Fecha', alt.Tooltip('Valor', title='M2 FED', format=',.0f')]
+            )
+            
+            chart_final = alt.layer(linea_activo, linea_m2).resolve_scale(y='independent').properties(height=350).interactive()
+            st.altair_chart(chart_final, use_container_width=True)
+
+    with tab1: mostrar_correlacion("NASDAQ", "NASDAQ", "nasdaq") 
+    with tab2: mostrar_correlacion("BITCOIN", "BITCOIN", "btc")  
+    with tab3: mostrar_correlacion("ORO", "GOLD", "gold")       
+    with tab4: mostrar_correlacion("DÓLAR DXY", "DXY", "dxy")    
+
+if __name__ == "__main__":
+    main()
